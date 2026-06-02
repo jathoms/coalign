@@ -140,7 +140,7 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
             .pos
             .get_or_init(|| K::build_pos(self.keys()))
             .get(key)?;
-        Some(self.values.as_ref().get(*idx)?)
+        self.values.as_ref().get(*idx)
     }
 
     pub fn keys(&self) -> &KC {
@@ -166,7 +166,7 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         let mut filled = vec![false; len];
 
         for (k, &pos) in target_pos.iter() {
-            if filled[pos] == true {
+            if filled[pos] {
                 return Err(CoalignError::IncompatibleKeys);
             }
             filled[pos] = true;
@@ -175,17 +175,17 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         if filled.iter().any(|x| !x) {
             return Err(CoalignError::IncompatibleKeys);
         }
-        Ok(VectorMapping::with_ordering(&ordering, reordered_vals))
+        Ok(VectorMapping::with_ordering(ordering, reordered_vals))
     }
     pub fn add(&self, rhs: &Self) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         if self.ordering.fingerprint == rhs.ordering.fingerprint {
-            return Ok(VectorMapping::with_ordering(
+            Ok(VectorMapping::with_ordering(
                 &self.ordering,
                 vector_ops::vector_add(&self.values, &rhs.values),
-            ));
+            ))
         } else {
             let rhs_aligned_to_lhs = rhs.aligned_to(&self.ordering)?;
-            return Ok(self.add_aligned(&rhs_aligned_to_lhs));
+            Ok(self.add_aligned(&rhs_aligned_to_lhs))
         }
     }
     fn add_aligned<VC2>(
@@ -196,7 +196,7 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         VC2: ValueContainer<V>,
     {
         let new_vals = vector_ops::vector_add(&self.values, &rhs.values);
-        return VectorMapping::with_ordering(&self.ordering, new_vals);
+        VectorMapping::with_ordering(&self.ordering, new_vals)
     }
     pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
         let keys = map.keys().cloned().collect::<Vec<_>>();
@@ -209,7 +209,7 @@ impl<K: KeyDomain + Ord, V: ValueDomain> VectorMapping<K, V, Vec<K>, Vec<V>> {
     pub fn from_map_sorted(map: &HashMap<K, V>) -> Self {
         let mut k_v_sorted = map
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (k.clone(), *v))
             .collect::<Vec<(K, V)>>();
         k_v_sorted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let (sorted_keys, sorted_values) = k_v_sorted.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
