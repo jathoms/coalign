@@ -1,0 +1,9 @@
+[package]
+name = "coalign"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = { version = "1.25.0" }
+thiserror = "2.0.18"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
