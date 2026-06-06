@@ -7,9 +7,14 @@ edition = "2024"
 harness = false
 name = "simple_vector_add"
 
+[[bench]]
+harness = false
+name = "realign_values"
+
 [dependencies]
 bytemuck = { version = "1.25.0" }
 pulp = { version = "0.22.2", features = ["macro"] }
+rustc-hash = "2.1.2"
 thiserror = "2.0.18"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 

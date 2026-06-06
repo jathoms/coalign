@@ -3,6 +3,7 @@ pub mod simd;
 pub mod vector_mapping;
 pub mod vector_ops;
 pub use vector_mapping::VectorMapping;
+pub mod coalignment;
 
 #[cfg(test)]
 mod tests {

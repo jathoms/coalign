@@ -11,8 +11,8 @@ pub trait Scalar:
     + PartialOrd
 {
     fn vector_add(left: &[Self], right: &[Self]) -> Vec<Self> {
-        // NOTE: Benchmarks show that this zero-init has no cost,
-        // Likely due to LLVM detecting them as dead-stores
+        // NOTE: Benchmarks suggest that this zero-init has no cost,
+        // Likely due to LLVM detecting them as dead-stores.
         let mut out = vec![Self::default(); left.len()];
         Self::vector_add_to_out(left, right, &mut out);
         out

@@ -1,6 +1,9 @@
+use crate::coalignment::realign_values_hash;
 use crate::vector_ops;
 use crate::vector_ops::Scalar;
 use bytemuck::cast_slice;
+use rustc_hash::FxHasher;
+use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::{
     cell::OnceCell,
     collections::HashMap,
@@ -19,7 +22,8 @@ impl<T: Scalar + Debug> ValueDomain for T {}
 pub type Fingerprint = u128;
 
 pub trait KeyDomain: Default + Eq + Hash + Clone {
-    fn build_pos(keys: &impl KeyContainer<Self>) -> HashMap<Self, usize> {
+    type Hasher: BuildHasher + Default + Clone + Debug;
+    fn build_pos(keys: &impl KeyContainer<Self>) -> HashMap<Self, usize, Self::Hasher> {
         keys.as_ref()
             .iter()
             .cloned()
@@ -31,12 +35,21 @@ pub trait KeyDomain: Default + Eq + Hash + Clone {
 }
 
 impl KeyDomain for u32 {
+    type Hasher = BuildHasherDefault<FxHasher>;
+    fn build_pos(keys: &impl KeyContainer<u32>) -> HashMap<Self, usize, Self::Hasher> {
+        keys.as_ref()
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (*k, i))
+            .collect()
+    }
     fn fingerprint(keys: &impl KeyContainer<u32>) -> Fingerprint {
         xxh3_128(cast_slice::<u32, u8>(keys.as_ref()))
     }
 }
 
 impl KeyDomain for String {
+    type Hasher = RandomState;
     fn fingerprint(keys: &impl KeyContainer<String>) -> Fingerprint {
         let mut h = Xxh3::new();
         h.write_usize(keys.as_ref().len()); // count prefix
@@ -58,7 +71,7 @@ impl<T: Clone> ValueContainer<T> for Vec<T> {}
 struct OrderingContainer<K: KeyDomain, KC: KeyContainer<K>> {
     fingerprint: Fingerprint,
     labels: KC,
-    pos: OnceCell<HashMap<K, usize>>,
+    pos: OnceCell<HashMap<K, usize, K::Hasher>>,
 }
 
 impl<K: KeyDomain, KC: KeyContainer<K>> OrderingContainer<K, KC> {
@@ -128,30 +141,14 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
-        assert_eq!(
-            rhs.ordering.labels.as_ref().len(),
-            self.ordering.labels.as_ref().len()
-        );
-        let len = rhs.ordering.labels.as_ref().len();
-
-        let target_pos = rhs
-            .ordering
-            .pos
-            .get_or_init(|| K::build_pos(&rhs.ordering.labels));
-
-        let mut reordered_vals = vec![V::default(); len];
-        let mut filled = vec![false; len];
-
-        for (k, &pos) in target_pos.iter() {
-            if filled[pos] {
-                return Err(CoalignError::IncompatibleKeys);
-            }
-            filled[pos] = true;
-            reordered_vals[pos] = self.get(k).cloned().ok_or(CoalignError::IncompatibleKeys)?;
-        }
-        if filled.iter().any(|x| !x) {
-            return Err(CoalignError::IncompatibleKeys);
-        }
+        let reordered_vals = realign_values_hash(
+            self.ordering.labels.as_ref(),
+            rhs.ordering.labels.as_ref(),
+            rhs.values().as_ref(),
+            self.ordering
+                .pos
+                .get_or_init(|| K::build_pos(&self.ordering.labels)),
+        )?;
         Ok(VectorMapping::with_ordering(&rhs.ordering, reordered_vals))
     }
     pub fn add(&self, rhs: &Self) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {

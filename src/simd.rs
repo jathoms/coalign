@@ -33,7 +33,7 @@ pub fn add_inplace_impl<S: Simd>(simd: S, left: &mut [f64], right: &[f64]) {
         *l = simd.add_f64s(*l, *r);
     }
     for (l, r) in left_tail.iter_mut().zip(right_tail) {
-        *l = *l + *r;
+        *l += *r;
     }
 }
 
