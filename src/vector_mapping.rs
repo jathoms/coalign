@@ -1,6 +1,6 @@
 use crate::coalignment::realign_values_hash;
-use crate::vector_ops;
-use crate::vector_ops::Scalar;
+use crate::vector_ops::{Scalar, VectorAdd};
+use crate::vector_ops::{VectorDiv, VectorMul, VectorOp, VectorSub};
 use bytemuck::cast_slice;
 use rustc_hash::FxHasher;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
@@ -86,10 +86,10 @@ impl KeyDomain for &str {
 }
 
 pub trait KeyContainer<K>: AsRef<[K]> + Clone {}
-pub trait ValueContainer<V>: AsRef<[V]> + Clone {}
+pub trait ValueContainer<V>: AsRef<[V]> + AsMut<[V]> + Clone {}
 
 impl<T, C: AsRef<[T]> + Clone> KeyContainer<T> for C {}
-impl<T, C: AsRef<[T]> + Clone> ValueContainer<T> for C {}
+impl<T, C: AsRef<[T]> + AsMut<[T]> + Clone> ValueContainer<T> for C {}
 // impl<T: Clone> ValueContainer<T> for Vec<T> {}
 
 #[derive(Default, Debug)]
@@ -174,28 +174,84 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
             reordered_vals,
         ))
     }
-    pub fn add(&self, rhs: &Self) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+    fn op<O: VectorOp, VC2: ValueContainer<V>>(
+        &self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         if self.ordering.fingerprint == rhs.ordering.fingerprint {
             Ok(VectorMapping::with_ordering(
                 &self.ordering,
-                vector_ops::vector_add(&self.values, &rhs.values),
+                O::apply(&self.values.as_ref(), &rhs.values.as_ref()),
             ))
         } else {
             let rhs_aligned_to_lhs = rhs.aligned_to(self)?;
-            Ok(self.add_aligned(&rhs_aligned_to_lhs))
+            let new_vals = O::apply(&self.values.as_ref(), &rhs_aligned_to_lhs.values.as_ref());
+            Ok(VectorMapping::with_ordering(&self.ordering, new_vals))
         }
     }
-    fn add_aligned<VC2>(
+    fn op_inplace<O: VectorOp, VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        if self.ordering.fingerprint == rhs.ordering.fingerprint {
+            O::apply_inplace(self.values.as_mut(), rhs.values.as_ref());
+        } else {
+            let rhs_aligned_to_lhs = rhs.aligned_to(self)?;
+            O::apply_inplace(self.values.as_mut(), rhs_aligned_to_lhs.values.as_ref());
+        }
+        Ok(())
+    }
+
+    pub fn add<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
-    ) -> VectorMapping<K, V, KC, Vec<V>>
-    where
-        VC2: ValueContainer<V>,
-    {
-        let new_vals = vector_ops::vector_add(&self.values, &rhs.values);
-        VectorMapping::with_ordering(&self.ordering, new_vals)
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+        self.op::<VectorAdd, VC2>(&rhs)
     }
-    #[must_use] 
+    pub fn sub<VC2: ValueContainer<V>>(
+        &self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+        self.op::<VectorSub, VC2>(&rhs)
+    }
+    pub fn mul<VC2: ValueContainer<V>>(
+        &self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+        self.op::<VectorMul, VC2>(&rhs)
+    }
+    pub fn div<VC2: ValueContainer<V>>(
+        &self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+        self.op::<VectorDiv, VC2>(&rhs)
+    }
+    pub fn add_inplace<VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        self.op_inplace::<VectorAdd, VC2>(&rhs)
+    }
+    pub fn sub_inplace<VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        self.op_inplace::<VectorSub, VC2>(&rhs)
+    }
+    pub fn mul_inplace<VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        self.op_inplace::<VectorMul, VC2>(&rhs)
+    }
+    pub fn div_inplace<VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        self.op_inplace::<VectorDiv, VC2>(&rhs)
+    }
+
+    #[must_use]
     pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
         let keys = map.keys().cloned().collect::<Vec<_>>();
         let values = map.values().copied().collect::<Vec<_>>();
@@ -204,7 +260,7 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
     }
 }
 impl<K: KeyDomain + Ord, V: ValueDomain> VectorMapping<K, V, Vec<K>, Vec<V>> {
-    #[must_use] 
+    #[must_use]
     pub fn from_map_sorted(map: &HashMap<K, V>) -> Self {
         let mut k_v_sorted = map
             .iter()

@@ -123,3 +123,58 @@ where
 {
     V::vector_div(left.as_ref(), right.as_ref())
 }
+
+pub trait VectorOp {
+    fn apply<T: Scalar>(left: &[T], right: &[T]) -> Vec<T>;
+    fn apply_into<T: Scalar>(left: &[T], right: &[T], out: &mut [T]);
+    fn apply_inplace<T: Scalar>(left: &mut [T], right: &[T]);
+}
+
+pub struct VectorAdd;
+impl VectorOp for VectorAdd {
+    fn apply<T: Scalar>(l: &[T], r: &[T]) -> Vec<T> {
+        T::vector_add(l, r)
+    }
+    fn apply_into<T: Scalar>(l: &[T], r: &[T], o: &mut [T]) {
+        T::vector_add_to_out(l, r, o)
+    }
+    fn apply_inplace<T: Scalar>(l: &mut [T], r: &[T]) {
+        T::vector_add_inplace(l, r)
+    }
+}
+pub struct VectorSub;
+impl VectorOp for VectorSub {
+    fn apply<T: Scalar>(l: &[T], r: &[T]) -> Vec<T> {
+        T::vector_sub(l, r)
+    }
+    fn apply_into<T: Scalar>(l: &[T], r: &[T], o: &mut [T]) {
+        T::vector_sub_to_out(l, r, o)
+    }
+    fn apply_inplace<T: Scalar>(l: &mut [T], r: &[T]) {
+        T::vector_sub_inplace(l, r)
+    }
+}
+pub struct VectorMul;
+impl VectorOp for VectorMul {
+    fn apply<T: Scalar>(l: &[T], r: &[T]) -> Vec<T> {
+        T::vector_mul(l, r)
+    }
+    fn apply_into<T: Scalar>(l: &[T], r: &[T], o: &mut [T]) {
+        T::vector_mul_to_out(l, r, o)
+    }
+    fn apply_inplace<T: Scalar>(l: &mut [T], r: &[T]) {
+        T::vector_mul_inplace(l, r)
+    }
+}
+pub struct VectorDiv;
+impl VectorOp for VectorDiv {
+    fn apply<T: Scalar>(l: &[T], r: &[T]) -> Vec<T> {
+        T::vector_div(l, r)
+    }
+    fn apply_into<T: Scalar>(l: &[T], r: &[T], o: &mut [T]) {
+        T::vector_div_to_out(l, r, o)
+    }
+    fn apply_inplace<T: Scalar>(l: &mut [T], r: &[T]) {
+        T::vector_div_inplace(l, r)
+    }
+}
