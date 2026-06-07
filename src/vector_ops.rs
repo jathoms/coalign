@@ -1,37 +1,70 @@
 use crate::simd;
+use paste::paste;
 use std::ops::{Add, Div, Mul, Sub};
+
+macro_rules! scalar_ops {
+    ($($name:ident => $op:tt),*) => {
+        paste! {
+            $(
+                fn [<vector_ $name>](left: &[Self], right: &[Self]) -> Vec<Self> {
+                    let mut out = vec![Self::default(); left.len()];
+                    Self::[<vector_ $name _to_out>](left, right, &mut out);
+                    out
+                }
+                fn [<vector_ $name _to_out>](left: &[Self], right: &[Self], out: &mut [Self]) {
+                    vector_op_fallback_to_out(left, right, out, |l, r| l $op r);
+                }
+                fn [<vector_ $name _inplace>](left: &mut [Self], right: &[Self]) {
+                    vector_op_fallback_inplace(left, right, |l, r| l $op r);
+                }
+            )*
+        }
+    };
+}
+
 pub trait Scalar:
     Add<Output = Self>
     + Sub<Output = Self>
     + Mul<Output = Self>
     + Div<Output = Self>
-    + Sized
     + Copy
     + Default
     + PartialOrd
 {
-    fn vector_add(left: &[Self], right: &[Self]) -> Vec<Self> {
-        // NOTE: Benchmarks suggest that this zero-init has no cost,
-        // Likely due to LLVM detecting them as dead-stores.
-        let mut out = vec![Self::default(); left.len()];
-        Self::vector_add_to_out(left, right, &mut out);
-        out
-    }
-    fn vector_add_to_out(left: &[Self], right: &[Self], out: &mut [Self]) {
-        vector_op_fallback_to_out(left, right, out, |l, r| l + r);
-    }
-    fn vector_add_inplace(left: &mut [Self], right: &[Self]) {
-        vector_op_fallback_inplace(left, right, |l, r| l + r);
-    }
+    scalar_ops!(add => +, sub => -, mul => *, div => /);
 }
-impl Scalar for f64 {
-    fn vector_add_to_out(left: &[Self], right: &[Self], out: &mut [Self]) {
-        simd::add_to_out(left, right, out);
-    }
-    fn vector_add_inplace(left: &mut [Self], right: &[Self]) {
-        simd::add_inplace(left, right);
-    }
+
+macro_rules! simd_overrides {
+    ($($t:ident => $($name:ident),*);* $(;)?) => {
+        paste! {
+            $(
+            impl Scalar for $t {
+                $(
+                fn [<vector_ $name _to_out>](left: &[Self], right: &[Self], out: &mut [Self]) {
+                    simd::[<$name _to_out_ $t>](left, right, out);
+                }
+                fn [<vector_ $name _inplace>](left: &mut [Self], right: &[Self]) {
+                    simd::[<$name _inplace_ $t>](left, right);
+                }
+                )*
+            }
+            )*
+        }
+    };
 }
+
+simd_overrides!(
+    f64 => add, sub, mul, div;
+    f32 => add, sub, mul, div;
+    u8 => add, sub;
+    u16 => add, sub, mul;
+    u32 => add, sub, mul;
+    u64 => add, sub, mul;
+    i8 => add, sub;
+    i16 => add, sub, mul;
+    i32 => add, sub, mul;
+    i64 => add, sub, mul;
+);
 
 #[inline(always)]
 pub fn vector_op_fallback_to_out<V, OP>(left: &[V], right: &[V], out: &mut [V], op: OP)
@@ -65,4 +98,28 @@ where
     B: AsRef<[V]>,
 {
     V::vector_add(left.as_ref(), right.as_ref())
+}
+pub fn vector_sub<V, A, B>(left: &A, right: &B) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+    B: AsRef<[V]>,
+{
+    V::vector_sub(left.as_ref(), right.as_ref())
+}
+pub fn vector_mul<V, A, B>(left: &A, right: &B) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+    B: AsRef<[V]>,
+{
+    V::vector_mul(left.as_ref(), right.as_ref())
+}
+pub fn vector_div<V, A, B>(left: &A, right: &B) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+    B: AsRef<[V]>,
+{
+    V::vector_div(left.as_ref(), right.as_ref())
 }

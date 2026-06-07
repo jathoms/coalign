@@ -34,7 +34,7 @@ mod tests {
         );
     }
     #[test]
-    fn from_into_map() {
+    fn from_map() {
         let tups = [(1, 10.0), (2, 11.0), (3, 12.0)];
         let map: HashMap<u32, f64> = tups.into();
         let vmap: VectorMapping<u32, f64, Vec<u32>, Vec<f64>> = map.into();

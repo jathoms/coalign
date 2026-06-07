@@ -5,6 +5,8 @@ use crate::{
     vector_mapping::{KeyDomain, ValueDomain},
 };
 
+/// misaligned_values corresponds to lhs' values,
+/// this function aligns them to rhs' keys
 pub fn realign_values_linear<K, V>(
     lhs: &[K],
     rhs: &[K],
@@ -14,8 +16,6 @@ where
     K: KeyDomain,
     V: ValueDomain,
 {
-    // misaligned_values corresponds to lhs' values,
-    // we want to align them to rhs' keys
     let len = rhs.len();
     assert_eq!(lhs.len(), len);
 
@@ -42,6 +42,8 @@ where
     Ok(reordered_vals)
 }
 
+/// misaligned_values corresponds to lhs' values,
+/// this function aligns them to rhs' keys
 pub fn realign_values_hash<K, V>(
     lhs: &[K],
     rhs: &[K],
@@ -52,8 +54,6 @@ where
     K: KeyDomain,
     V: ValueDomain,
 {
-    // misaligned_values corresponds to lhs' values,
-    // we want to align them to rhs' keys
     let len = rhs.len();
     assert_eq!(lhs.len(), len);
 
@@ -76,4 +76,22 @@ where
         return Err(CoalignError::IncompatibleKeys);
     };
     Ok(reordered_vals)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_realign() {
+        let k1 = ["a", "b", "c"];
+        let k2 = ["c", "b", "a"];
+        let vals = [3.0, 2.0, 1.0];
+        let pos_mapping_lhs = k1.iter().enumerate().map(|(i, k)| (*k, i)).collect();
+
+        let realigned = realign_values_hash(&k1, &k2, &vals, &pos_mapping_lhs)
+            .expect("Failed to realign values");
+
+        assert_eq!(realigned, [1.0, 2.0, 3.0]);
+    }
 }
