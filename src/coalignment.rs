@@ -5,7 +5,7 @@ use crate::{
     vector_mapping::{KeyDomain, ValueDomain},
 };
 
-/// misaligned_values corresponds to lhs' values,
+/// `misaligned_values` corresponds to lhs' values,
 /// this function aligns them to rhs' keys
 pub fn realign_values_linear<K, V>(
     lhs: &[K],
@@ -34,15 +34,15 @@ where
         }
         used[pos] = true;
         num_filled += 1;
-        reordered_vals[i] = misaligned_values[pos]
+        reordered_vals[i] = misaligned_values[pos];
     }
     if num_filled < len {
         return Err(CoalignError::IncompatibleKeys);
-    };
+    }
     Ok(reordered_vals)
 }
 
-/// misaligned_values corresponds to lhs' values,
+/// `misaligned_values` corresponds to lhs' values,
 /// this function aligns them to rhs' keys
 pub fn realign_values_hash<K, V>(
     lhs: &[K],
@@ -70,11 +70,11 @@ where
         }
         used[pos] = true;
         num_filled += 1;
-        reordered_vals[i] = misaligned_values[pos]
+        reordered_vals[i] = misaligned_values[pos];
     }
     if num_filled < len {
         return Err(CoalignError::IncompatibleKeys);
-    };
+    }
     Ok(reordered_vals)
 }
 

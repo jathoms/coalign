@@ -195,14 +195,16 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         let new_vals = vector_ops::vector_add(&self.values, &rhs.values);
         VectorMapping::with_ordering(&self.ordering, new_vals)
     }
+    #[must_use] 
     pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
         let keys = map.keys().cloned().collect::<Vec<_>>();
-        let values = map.values().cloned().collect::<Vec<_>>();
+        let values = map.values().copied().collect::<Vec<_>>();
 
         VectorMapping::new(keys, values)
     }
 }
 impl<K: KeyDomain + Ord, V: ValueDomain> VectorMapping<K, V, Vec<K>, Vec<V>> {
+    #[must_use] 
     pub fn from_map_sorted(map: &HashMap<K, V>) -> Self {
         let mut k_v_sorted = map
             .iter()
