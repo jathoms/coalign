@@ -5,7 +5,11 @@ edition = "2024"
 
 [[bench]]
 harness = false
-name = "simple_vector_add"
+name = "vector_add"
+
+[[bench]]
+harness = false
+name = "scalar_add"
 
 [[bench]]
 harness = false

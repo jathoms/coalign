@@ -83,7 +83,6 @@ simd_overrides!(
     i64 => add, sub, mul;
 );
 
-#[inline(always)]
 pub fn vector_op_fallback_to_out<V, OP>(left: &[V], right: &[V], out: &mut [V], op: OP)
 where
     V: Scalar,
@@ -97,7 +96,6 @@ where
         .for_each(|((x, y), e)| *e = op(*x, *y));
 }
 
-#[inline(always)]
 fn vector_op_fallback_inplace<V, OP>(left: &mut [V], right: &[V], op: OP)
 where
     V: Scalar,
@@ -108,7 +106,6 @@ where
         .for_each(|(l, r)| *l = op(*l, *r));
 }
 
-#[inline(always)]
 pub fn vector_scalar_op_fallback_to_out<V, OP>(left: &[V], right: V, out: &mut [V], op: OP)
 where
     V: Scalar,
@@ -118,7 +115,6 @@ where
     left.iter().zip(out).for_each(|(x, e)| *e = op(*x, right));
 }
 
-#[inline(always)]
 pub fn vector_scalar_op_fallback_inplace<V, OP>(left: &mut [V], right: V, op: OP)
 where
     V: Scalar,
