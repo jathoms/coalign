@@ -5,7 +5,7 @@ use rand::seq::SliceRandom;
 use std::array;
 
 #[test]
-fn main() {
+fn check_adding_mappings() {
     let k1 = array::from_fn::<i32, 100, _>(|i| (i * 32) as i32 - 5);
     let v1 = array::from_fn::<_, 100, _>(|i| (((i << 5) % (i + 1) * 1000) / (i + 1)) as f64);
 
@@ -35,4 +35,3 @@ fn main() {
             .collect::<Vec<_>>()
     )
 }
-
