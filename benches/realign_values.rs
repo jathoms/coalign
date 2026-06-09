@@ -1,7 +1,7 @@
 use coalign::vector_mapping::KeyDomain;
 use std::{collections::HashMap, hint::black_box};
 
-use coalign::coalignment::{realign_values_hash, realign_values_linear};
+use coalign::coalignment::realign_values_same_len;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 fn bench_realign_values(c: &mut Criterion) {
@@ -20,19 +20,6 @@ fn bench_realign_values(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("linear", size), &size, |bch, _| {
-            bch.iter(|| {
-                black_box(
-                    realign_values_linear(
-                        black_box(&lhs),
-                        black_box(&rhs),
-                        black_box(&misaligned_values),
-                    )
-                    .unwrap(),
-                )
-            });
-        });
-
         group.bench_with_input(BenchmarkId::new("hash", size), &size, |bch, _| {
             bch.iter(|| {
                 let pos_mapping_lhs = black_box(
@@ -43,7 +30,7 @@ fn bench_realign_values(c: &mut Criterion) {
                         .collect::<HashMap<_, _, <u32 as KeyDomain>::Hasher>>(),
                 );
                 black_box(
-                    realign_values_hash(
+                    realign_values_same_len(
                         black_box(&lhs),
                         black_box(&rhs),
                         black_box(&misaligned_values),
@@ -59,7 +46,7 @@ fn bench_realign_values(c: &mut Criterion) {
             |bch, _| {
                 bch.iter(|| {
                     black_box(
-                        realign_values_hash(
+                        realign_values_same_len(
                             black_box(&lhs),
                             black_box(&rhs),
                             black_box(&misaligned_values),

@@ -163,6 +163,7 @@ pub trait VectorOp {
     fn apply_scalar<T: Scalar>(left: &[T], right: T) -> Vec<T>;
     fn apply_scalar_into<T: Scalar>(left: &[T], right: T, out: &mut [T]);
     fn apply_scalar_inplace<T: Scalar>(left: &mut [T], right: T);
+    fn apply_scalar_scalar<T: Scalar>(l: T, r: T) -> T;
 }
 
 macro_rules! impl_vectorop {
@@ -186,6 +187,9 @@ macro_rules! impl_vectorop {
             }
             fn apply_scalar_inplace<T: Scalar>(l: &mut [T], r: T) {
                 T::[<vector_scalar_ $op _inplace>](l, r)
+            }
+            fn apply_scalar_scalar<T: Scalar>(l: T, r: T) -> T {
+                T::$op(l, r)
             }
             )*
         }

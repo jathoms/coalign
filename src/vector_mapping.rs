@@ -1,4 +1,4 @@
-use crate::coalignment::realign_values_hash;
+use crate::coalignment::realign_values_same_len;
 use crate::vector_ops::{Scalar, VectorAdd};
 use crate::vector_ops::{VectorDiv, VectorMul, VectorOp, VectorSub};
 use bytemuck::cast_slice;
@@ -129,6 +129,11 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
     }
 
     fn with_ordering(ordering: &OrderingContainer<K, KC>, values: VC) -> Self {
+        assert_eq!(
+            ordering.labels.as_ref().len(),
+            values.as_ref().len(),
+            "Length of ordering and values do not match in `VectorMapping::with_ordering`"
+        );
         Self {
             ordering: OrderingContainer {
                 fingerprint: ordering.fingerprint,
@@ -152,15 +157,20 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
     pub fn keys(&self) -> &KC {
         &self.ordering.labels
     }
+
     pub fn values(&self) -> &VC {
         &self.values
+    }
+
+    pub fn len(&self) -> usize {
+        self.ordering.labels.as_ref().len()
     }
 
     fn aligned_to<VC2: ValueContainer<V>>(
         &self,
         target_order: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
-        let reordered_vals = realign_values_hash(
+        let reordered_vals = realign_values_same_len(
             self.ordering.labels.as_ref(),
             target_order.ordering.labels.as_ref(),
             self.values().as_ref(),
@@ -173,21 +183,55 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
             reordered_vals,
         ))
     }
+
     fn op<O: VectorOp, VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         if self.ordering.fingerprint == rhs.ordering.fingerprint {
-            Ok(VectorMapping::with_ordering(
+            return Ok(VectorMapping::with_ordering(
                 &self.ordering,
                 O::apply(self.values.as_ref(), rhs.values.as_ref()),
-            ))
-        } else {
+            ));
+        };
+        if self.len() == rhs.len() {
             let rhs_aligned_to_lhs = rhs.aligned_to(self)?;
             let new_vals = O::apply(self.values.as_ref(), rhs_aligned_to_lhs.values.as_ref());
-            Ok(VectorMapping::with_ordering(&self.ordering, new_vals))
+            return Ok(VectorMapping::with_ordering(&self.ordering, new_vals));
+        };
+        // 2 paths when adding a A and B where A and B are `VectorMapping`s and
+        // B's keys are a subset of A's or vice-versa
+        // 1. create a new vector of <identity> and fill in the values of the smaller vector in the
+        //    correct places, then perform a standard vector op between the values and the constructed
+        //    vector, or
+        // 2. copy the larger vector into a new buffer and edit the specific elements 1-by-1.
+        //
+        // for now, only approach 2 is implemented
+        if self.len() > rhs.len() {
+            Self::op_large_small::<O, VC, VC2>(self, rhs)
+        } else {
+            Self::op_large_small::<O, VC2, VC>(rhs, self)
         }
     }
+    fn op_large_small<O: VectorOp, L: ValueContainer<V>, S: ValueContainer<V>>(
+        large: &VectorMapping<K, V, KC, L>,
+        small: &VectorMapping<K, V, KC, S>,
+    ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
+        let large_pos = large
+            .ordering
+            .pos
+            .get_or_init(|| K::build_pos(&large.ordering.labels));
+        let mut buf = large.values().as_ref().to_owned();
+
+        for (small_k, small_v) in small.keys().as_ref().iter().zip(small.values().as_ref()) {
+            let pos = large_pos
+                .get(small_k)
+                .ok_or(CoalignError::IncompatibleKeys)?;
+            buf[*pos] = O::apply_scalar_scalar(buf[*pos], *small_v)
+        }
+        Ok(VectorMapping::with_ordering(&large.ordering, buf))
+    }
+
     fn op_inplace<O: VectorOp, VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
@@ -201,53 +245,100 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         Ok(())
     }
 
+    fn op_scalar<O: VectorOp>(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        VectorMapping::with_ordering(&self.ordering, O::apply_scalar(self.values.as_ref(), rhs))
+    }
+
+    fn op_scalar_inplace<O: VectorOp>(&mut self, rhs: V) {
+        O::apply_scalar_inplace(self.values.as_mut(), rhs);
+    }
+
     pub fn add<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         self.op::<VectorAdd, VC2>(rhs)
     }
+
     pub fn sub<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         self.op::<VectorSub, VC2>(rhs)
     }
+
     pub fn mul<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         self.op::<VectorMul, VC2>(rhs)
     }
+
     pub fn div<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<VectorMapping<K, V, KC, Vec<V>>, CoalignError> {
         self.op::<VectorDiv, VC2>(rhs)
     }
+
     pub fn add_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<(), CoalignError> {
         self.op_inplace::<VectorAdd, VC2>(rhs)
     }
+
     pub fn sub_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<(), CoalignError> {
         self.op_inplace::<VectorSub, VC2>(rhs)
     }
+
     pub fn mul_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<(), CoalignError> {
         self.op_inplace::<VectorMul, VC2>(rhs)
     }
+
     pub fn div_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
     ) -> Result<(), CoalignError> {
         self.op_inplace::<VectorDiv, VC2>(rhs)
+    }
+
+    pub fn add_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorAdd>(rhs)
+    }
+
+    pub fn sub_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorSub>(rhs)
+    }
+
+    pub fn mul_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorMul>(rhs)
+    }
+
+    pub fn div_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorDiv>(rhs)
+    }
+
+    pub fn add_scalar_inplace(&mut self, rhs: V) {
+        self.op_scalar_inplace::<VectorAdd>(rhs);
+    }
+
+    pub fn sub_scalar_inplace(&mut self, rhs: V) {
+        self.op_scalar_inplace::<VectorSub>(rhs);
+    }
+
+    pub fn mul_scalar_inplace(&mut self, rhs: V) {
+        self.op_scalar_inplace::<VectorMul>(rhs);
+    }
+
+    pub fn div_scalar_inplace(&mut self, rhs: V) {
+        self.op_scalar_inplace::<VectorDiv>(rhs);
     }
 
     #[must_use]
@@ -292,6 +383,20 @@ mod tests {
         assert_eq!(
             <Vec<f64> as AsRef<Vec<f64>>>::as_ref(&c.values()),
             &[20.0, 30.0, 10.0]
+        );
+    }
+    #[test]
+    fn add_subset_mapping() {
+        let a = VectorMapping::new(vec!["a", "b", "c"], vec![1.0, 2.0, 3.0]);
+        let b = VectorMapping::new(vec!["b"], vec![20.0]);
+        let c = a.add(&b).expect("Couldn't add mappings");
+        let d = b.add(&a).expect("Couldn't add mappings");
+        assert_eq!(c.keys(), d.keys());
+        assert_eq!(c.values(), d.values());
+        dbg!(&c);
+        assert_eq!(
+            <Vec<f64> as AsRef<Vec<f64>>>::as_ref(&c.values()),
+            &[1.0, 22.0, 3.0]
         );
     }
 }
