@@ -15,10 +15,14 @@ name = "scalar_add"
 harness = false
 name = "realign_values"
 
+[[bench]]
+harness = false
+name = "mixed_ops"
+
 [dependencies]
 bytemuck = { version = "1.25.0" }
 paste = "1.0.15"
-pulp = { version = "0.22.2", features = ["macro"] }
+pulp = { version = "0.22.2", features = ["macro", "std", "x86-v3", "x86-v4"] }
 rustc-hash = "2.1.2"
 thiserror = "2.0.18"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

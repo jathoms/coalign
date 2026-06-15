@@ -4,9 +4,8 @@ use crate::vector_ops::{VectorDiv, VectorMul, VectorOp, VectorSub};
 use bytemuck::cast_slice;
 use rustc_hash::FxHasher;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::{
-    cell::OnceCell,
     collections::HashMap,
     fmt::Debug,
     hash::{Hash, Hasher},
@@ -95,7 +94,7 @@ impl<T, C: AsRef<[T]> + AsMut<[T]> + Clone> ValueContainer<T> for C {}
 struct OrderingContainer<K: KeyDomain, KC> {
     fingerprint: Fingerprint,
     labels: KC,
-    pos: Arc<OnceCell<HashMap<K, usize, K::Hasher>>>,
+    pos: Arc<OnceLock<HashMap<K, usize, K::Hasher>>>,
 }
 
 impl<K: KeyDomain, KC: KeyContainer<K>> OrderingContainer<K, KC> {

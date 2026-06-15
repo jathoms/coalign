@@ -2,7 +2,12 @@ use coalign::vector_ops::*;
 use std::hint::black_box;
 use std::ops::{Add, Div, Mul, Sub};
 
+use coalign::VectorMapping;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use std::array;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Default)]
 #[repr(transparent)]
