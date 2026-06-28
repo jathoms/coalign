@@ -2,6 +2,9 @@
 name = "coalign"
 version = "0.1.0"
 edition = "2024"
+description = "Fast arithmetic over keyed numeric maps"
+repository = "https://github.com/jathoms/coalign"
+license = "MIT"
 
 [[bench]]
 harness = false
