@@ -71,4 +71,3 @@ fn check_chain_ops() {
             .collect::<Vec<_>>()
     );
 }
-

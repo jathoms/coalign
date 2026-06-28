@@ -5,6 +5,7 @@ use bytemuck::cast_slice;
 use rustc_hash::FxHasher;
 use std::borrow::Borrow;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
+use std::ops::{Add as StdAdd, Div as StdDiv, Mul as StdMul, Sub as StdSub};
 use std::sync::{Arc, OnceLock};
 use std::{
     collections::HashMap,
@@ -276,6 +277,13 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         VectorMapping::with_ordering(&self.ordering, O::apply_scalar(self.values.as_ref(), rhs))
     }
 
+    pub fn op_scalar_left<O: VectorOp>(&self, lhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        VectorMapping::with_ordering(
+            &self.ordering,
+            O::apply_scalar_left(lhs, self.values.as_ref()),
+        )
+    }
+
     pub fn add<VC2: ValueContainer<V>>(
         &self,
         rhs: &VectorMapping<K, V, KC, VC2>,
@@ -320,6 +328,22 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         self.op_scalar::<VectorDiv>(rhs)
     }
 
+    pub fn scalar_add(&self, lhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar_left::<VectorAdd>(lhs)
+    }
+
+    pub fn scalar_sub(&self, lhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar_left::<VectorSub>(lhs)
+    }
+
+    pub fn scalar_mul(&self, lhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar_left::<VectorMul>(lhs)
+    }
+
+    pub fn scalar_div(&self, lhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar_left::<VectorDiv>(lhs)
+    }
+
     #[must_use]
     pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
         let keys = map.keys().cloned().collect::<Vec<_>>();
@@ -347,6 +371,11 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: MutValueContainer<V>
     fn op_scalar_inplace<O: VectorOp>(&mut self, rhs: V) {
         O::apply_scalar_inplace(self.values.as_mut(), rhs);
     }
+
+    fn op_scalar_left_inplace<O: VectorOp>(&mut self, lhs: V) {
+        O::apply_scalar_left_inplace(lhs, self.values.as_mut());
+    }
+
     pub fn add_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
@@ -390,6 +419,22 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: MutValueContainer<V>
     pub fn div_scalar_inplace(&mut self, rhs: V) {
         self.op_scalar_inplace::<VectorDiv>(rhs);
     }
+
+    pub fn scalar_add_inplace(&mut self, lhs: V) {
+        self.op_scalar_left_inplace::<VectorAdd>(lhs);
+    }
+
+    pub fn scalar_sub_inplace(&mut self, lhs: V) {
+        self.op_scalar_left_inplace::<VectorSub>(lhs);
+    }
+
+    pub fn scalar_mul_inplace(&mut self, lhs: V) {
+        self.op_scalar_left_inplace::<VectorMul>(lhs);
+    }
+
+    pub fn scalar_div_inplace(&mut self, lhs: V) {
+        self.op_scalar_left_inplace::<VectorDiv>(lhs);
+    }
 }
 
 impl<K: KeyDomain + Ord, V: ValueDomain> VectorMapping<K, V, Vec<K>, Vec<V>> {
@@ -414,9 +459,95 @@ impl<K: KeyDomain + Ord, V: ValueDomain> From<HashMap<K, V>>
     }
 }
 
+macro_rules! impl_scalar_lhs_op {
+    ($t:ty, $trait:ident, $fn:ident, $vector_op:ident, $method:ident) => {
+        impl<K: KeyDomain, KC: KeyContainer<K>, VC: ValueContainer<$t>>
+            $trait<&VectorMapping<K, $t, KC, VC>> for $t
+        {
+            type Output = VectorMapping<K, $t, KC, Vec<$t>>;
+
+            fn $fn(self, rhs: &VectorMapping<K, $t, KC, VC>) -> Self::Output {
+                rhs.$method(self)
+            }
+        }
+
+        impl<K: KeyDomain, KC: KeyContainer<K>, VC: ValueContainer<$t>>
+            $trait<VectorMapping<K, $t, KC, VC>> for $t
+        {
+            type Output = VectorMapping<K, $t, KC, Vec<$t>>;
+
+            fn $fn(self, rhs: VectorMapping<K, $t, KC, VC>) -> Self::Output {
+                let (ordering, values) = rhs.into_parts();
+                let out = $vector_op::apply_scalar_left(self, values.as_ref());
+                VectorMapping {
+                    ordering,
+                    values: out,
+                    _marker: Default::default(),
+                }
+            }
+        }
+    };
+}
+
+macro_rules! impl_scalar_lhs_ops {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl_scalar_lhs_op!($t, StdAdd, add, VectorAdd, scalar_add);
+            impl_scalar_lhs_op!($t, StdSub, sub, VectorSub, scalar_sub);
+            impl_scalar_lhs_op!($t, StdMul, mul, VectorMul, scalar_mul);
+            impl_scalar_lhs_op!($t, StdDiv, div, VectorDiv, scalar_div);
+        )*
+    };
+}
+
+macro_rules! impl_scalar_rhs_op {
+    ($t:ty, $trait:ident, $fn:ident, $vector_op:ident, $method:ident) => {
+        impl<K: KeyDomain, KC: KeyContainer<K>, VC: ValueContainer<$t>> $trait<$t>
+            for &VectorMapping<K, $t, KC, VC>
+        {
+            type Output = VectorMapping<K, $t, KC, Vec<$t>>;
+
+            fn $fn(self, rhs: $t) -> Self::Output {
+                self.$method(rhs)
+            }
+        }
+
+        impl<K: KeyDomain, KC: KeyContainer<K>, VC: ValueContainer<$t>> $trait<$t>
+            for VectorMapping<K, $t, KC, VC>
+        {
+            type Output = VectorMapping<K, $t, KC, Vec<$t>>;
+
+            fn $fn(self, rhs: $t) -> Self::Output {
+                let (ordering, values) = self.into_parts();
+                let out = $vector_op::apply_scalar(values.as_ref(), rhs);
+                VectorMapping {
+                    ordering,
+                    values: out,
+                    _marker: Default::default(),
+                }
+            }
+        }
+    };
+}
+
+macro_rules! impl_scalar_rhs_ops {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl_scalar_rhs_op!($t, StdAdd, add, VectorAdd, add_scalar);
+            impl_scalar_rhs_op!($t, StdSub, sub, VectorSub, sub_scalar);
+            impl_scalar_rhs_op!($t, StdMul, mul, VectorMul, mul_scalar);
+            impl_scalar_rhs_op!($t, StdDiv, div, VectorDiv, div_scalar);
+        )*
+    };
+}
+
+impl_scalar_lhs_ops!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
+impl_scalar_rhs_ops!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::VectorMapping;
+
     #[test]
     fn align_mapping() {
         let a = VectorMapping::new(vec![0, 1, 2], vec![1.0, 2.0, 3.0]);
@@ -441,5 +572,44 @@ mod tests {
             <Vec<f64> as AsRef<Vec<f64>>>::as_ref(&c.values()),
             &[1.0, 22.0, 3.0]
         );
+    }
+
+    #[test]
+    fn scalar_left_methods() {
+        let values = VectorMapping::new(vec!["a", "b", "c"], vec![1.0, 2.0, 4.0]);
+
+        let subbed = values.scalar_sub(10.0);
+        let divided = values.scalar_div(24.0);
+
+        assert_eq!(subbed.values(), &vec![9.0, 8.0, 6.0]);
+        assert_eq!(divided.values(), &vec![24.0, 12.0, 6.0]);
+    }
+
+    #[test]
+    fn scalar_left_operators() {
+        let values: VectorMapping<i32, f64, Vec<i32>, Vec<f64>> =
+            VectorMapping::new(vec![0, 1, 2], vec![1.0, 2.0, 4.0]);
+
+        let via_ref = 3.0 + &values;
+        let via_owned = std::ops::Add::add(3.0, values.clone());
+        let divided = 48.0 / &values;
+
+        assert_eq!(via_ref.values(), &vec![4.0, 5.0, 7.0]);
+        assert_eq!(via_owned.values(), via_ref.values());
+        assert_eq!(divided.values(), &vec![48.0, 24.0, 12.0]);
+    }
+
+    #[test]
+    fn scalar_right_operators() {
+        let values: VectorMapping<i32, f64, Vec<i32>, Vec<f64>> =
+            VectorMapping::new(vec![0, 1, 2], vec![1.0, 2.0, 4.0]);
+
+        let added = &values + 3.0;
+        let owned_added = values.clone() + 3.0;
+        let divided = values / 48.0;
+
+        assert_eq!(added.values(), &vec![4.0, 5.0, 7.0]);
+        assert_eq!(owned_added.values(), added.values());
+        assert_eq!(divided.values(), &vec![1.0 / 48.0, 2.0 / 48.0, 4.0 / 48.0]);
     }
 }

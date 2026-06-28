@@ -28,6 +28,17 @@ macro_rules! scalar_ops {
                 fn [<vector_scalar_ $name _inplace>](left: &mut [Self], right: Self) {
                     vector_scalar_op_fallback_inplace(left, right, |l, r| l $op r);
                 }
+                fn [<scalar_vector_ $name>](left: Self, right: &[Self]) -> Vec<Self> {
+                    let mut out = vec![Self::default(); right.len()];
+                    Self::[<scalar_vector_ $name _to_out>](left, right, &mut out);
+                    out
+                }
+                fn [<scalar_vector_ $name _to_out>](left: Self, right: &[Self], out: &mut [Self]) {
+                    scalar_vector_op_fallback_to_out(left, right, out, |l, r| l $op r);
+                }
+                fn [<scalar_vector_ $name _inplace>](left: Self, right: &mut [Self]) {
+                    scalar_vector_op_fallback_inplace(left, right, |l, r| l $op r);
+                }
             )*
         }
     };
@@ -62,6 +73,12 @@ macro_rules! simd_overrides {
                 }
                 fn [<vector_scalar_ $name _inplace>](left: &mut [Self], right: Self) {
                     simd::[<$name _scalar_inplace_ $t>](left, right);
+                }
+                fn [<scalar_vector_ $name _to_out>](left: Self, right: &[Self], out: &mut [Self]) {
+                    simd::[<scalar_ $name _to_out_ $t>](left, right, out);
+                }
+                fn [<scalar_vector_ $name _inplace>](left: Self, right: &mut [Self]) {
+                    simd::[<scalar_ $name _inplace_ $t>](left, right);
                 }
                 )*
             }
@@ -123,6 +140,23 @@ where
     left.iter_mut().for_each(|l| *l = op(*l, right));
 }
 
+pub fn scalar_vector_op_fallback_to_out<V, OP>(left: V, right: &[V], out: &mut [V], op: OP)
+where
+    V: Scalar,
+    OP: Fn(V, V) -> V,
+{
+    assert_eq!(right.len(), out.len());
+    right.iter().zip(out).for_each(|(x, e)| *e = op(left, *x));
+}
+
+pub fn scalar_vector_op_fallback_inplace<V, OP>(left: V, right: &mut [V], op: OP)
+where
+    V: Scalar,
+    OP: Fn(V, V) -> V,
+{
+    right.iter_mut().for_each(|r| *r = op(left, *r));
+}
+
 pub fn vector_add<V, A, B>(left: &A, right: &B) -> Vec<V>
 where
     V: Scalar,
@@ -156,6 +190,38 @@ where
     V::vector_div(left.as_ref(), right.as_ref())
 }
 
+pub fn scalar_vector_add<V, A>(left: V, right: &A) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+{
+    V::scalar_vector_add(left, right.as_ref())
+}
+
+pub fn scalar_vector_sub<V, A>(left: V, right: &A) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+{
+    V::scalar_vector_sub(left, right.as_ref())
+}
+
+pub fn scalar_vector_mul<V, A>(left: V, right: &A) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+{
+    V::scalar_vector_mul(left, right.as_ref())
+}
+
+pub fn scalar_vector_div<V, A>(left: V, right: &A) -> Vec<V>
+where
+    V: Scalar,
+    A: AsRef<[V]>,
+{
+    V::scalar_vector_div(left, right.as_ref())
+}
+
 pub trait VectorOp {
     fn apply<T: Scalar>(left: &[T], right: &[T]) -> Vec<T>;
     fn apply_into<T: Scalar>(left: &[T], right: &[T], out: &mut [T]);
@@ -163,6 +229,9 @@ pub trait VectorOp {
     fn apply_scalar<T: Scalar>(left: &[T], right: T) -> Vec<T>;
     fn apply_scalar_into<T: Scalar>(left: &[T], right: T, out: &mut [T]);
     fn apply_scalar_inplace<T: Scalar>(left: &mut [T], right: T);
+    fn apply_scalar_left<T: Scalar>(left: T, right: &[T]) -> Vec<T>;
+    fn apply_scalar_left_into<T: Scalar>(left: T, right: &[T], out: &mut [T]);
+    fn apply_scalar_left_inplace<T: Scalar>(left: T, right: &mut [T]);
     fn apply_scalar_scalar<T: Scalar>(l: T, r: T) -> T;
 }
 
@@ -187,6 +256,15 @@ macro_rules! impl_vectorop {
             }
             fn apply_scalar_inplace<T: Scalar>(l: &mut [T], r: T) {
                 T::[<vector_scalar_ $op _inplace>](l, r)
+            }
+            fn apply_scalar_left<T: Scalar>(l: T, r: &[T]) -> Vec<T> {
+                T::[<scalar_vector_ $op>](l, r)
+            }
+            fn apply_scalar_left_into<T: Scalar>(l: T, r: &[T], o: &mut [T]) {
+                T::[<scalar_vector_ $op _to_out>](l, r, o);
+            }
+            fn apply_scalar_left_inplace<T: Scalar>(l: T, r: &mut [T]) {
+                T::[<scalar_vector_ $op _inplace>](l, r)
             }
             fn apply_scalar_scalar<T: Scalar>(l: T, r: T) -> T {
                 T::$op(l, r)

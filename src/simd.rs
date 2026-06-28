@@ -99,6 +99,51 @@ macro_rules! impl_simd_scalar_ops_inplace {
     };
 }
 
+macro_rules! impl_simd_left_scalar_ops {
+    ($t:ident, $($name:ident => $simd_method:ident => $op:tt),*) => {
+        paste! {
+            $(
+            #[pulp::with_simd([<scalar_ $name _to_out_ $t>] = pulp::Arch::new())]
+            #[inline(always)]
+            pub fn [<scalar_ $name _to_out_impl_ $t>]<S: Simd>(simd: S, left: $t, right: &[$t], out: &mut [$t]) {
+                let lhs = simd.[<splat_ $t s>](left);
+                let (right_head, right_tail) = S::[<as_simd_ $t s>](right);
+                let (out_head, out_tail) = S::[<as_mut_simd_ $t s>](out);
+
+                for (r, o) in right_head.iter().zip(out_head) {
+                    *o = simd.[<$simd_method _ $t s>](lhs, *r);
+                }
+                for (r, o) in right_tail.iter().zip(out_tail) {
+                    *o = left $op *r;
+                }
+            }
+            )*
+        }
+    };
+}
+
+macro_rules! impl_simd_left_scalar_ops_inplace {
+    ($t:ident, $($name:ident => $simd_method:ident => $op:tt),*) => {
+        paste! {
+            $(
+            #[pulp::with_simd([<scalar_ $name _inplace_ $t>] = pulp::Arch::new())]
+            #[inline(always)]
+            pub fn [<scalar_ $name _inplace_impl_ $t>]<S: Simd>(simd: S, left: $t, right: &mut [$t]) {
+                let lhs = simd.[<splat_ $t s>](left);
+                let (right_head, right_tail) = S::[<as_mut_simd_ $t s>](right);
+
+                for r in right_head.iter_mut() {
+                    *r = simd.[<$simd_method _ $t s>](lhs, *r);
+                }
+                for r in right_tail.iter_mut() {
+                    *r = left $op *r;
+                }
+            }
+            )*
+        }
+    };
+}
+
 macro_rules! impl_simd_add_sub {
     ($($t:ident),*) => {
         $(
@@ -107,6 +152,10 @@ macro_rules! impl_simd_add_sub {
             sub => sub => -
             );
             impl_simd_scalar_ops!($t,
+            add => add => +,
+            sub => sub => -
+            );
+            impl_simd_left_scalar_ops!($t,
             add => add => +,
             sub => sub => -
             );
@@ -123,6 +172,9 @@ macro_rules! impl_simd_mul {
             impl_simd_scalar_ops!($t,
             mul => mul => *
             );
+            impl_simd_left_scalar_ops!($t,
+            mul => mul => *
+            );
         )*
     };
 }
@@ -134,6 +186,9 @@ macro_rules! impl_simd_div {
             div => div => /
             );
             impl_simd_scalar_ops!($t,
+            div => div => /
+            );
+            impl_simd_left_scalar_ops!($t,
             div => div => /
             );
         )*
@@ -151,6 +206,10 @@ macro_rules! impl_simd_add_sub_inplace {
             add => add => +=,
             sub => sub => -=
             );
+            impl_simd_left_scalar_ops_inplace!($t,
+            add => add => +,
+            sub => sub => -
+            );
         )*
     };
 }
@@ -164,6 +223,9 @@ macro_rules! impl_simd_mul_inplace {
             impl_simd_scalar_ops_inplace!($t,
             mul => mul => *=
             );
+            impl_simd_left_scalar_ops_inplace!($t,
+            mul => mul => *
+            );
         )*
     };
 }
@@ -176,6 +238,9 @@ macro_rules! impl_simd_div_inplace {
             );
             impl_simd_scalar_ops_inplace!($t,
             div => div => /=
+            );
+            impl_simd_left_scalar_ops_inplace!($t,
+            div => div => /
             );
         )*
     };
@@ -211,6 +276,16 @@ mod tests {
         let expected: [f64; 103] = array::from_fn(|i| x[i] * 5.0);
 
         let result = f64::vector_scalar_mul(&x, 5.0);
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn basic_left_scalar_sub() {
+        let x: [f64; 103] = array::from_fn(|x| x as f64 * 1.5);
+        let expected: [f64; 103] = array::from_fn(|i| 10.0 - x[i]);
+
+        let result = f64::scalar_vector_sub(10.0, &x);
 
         assert_eq!(result, expected);
     }
