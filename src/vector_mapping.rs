@@ -2,9 +2,9 @@ use crate::coalignment::realign_values_same_len;
 use crate::vector_ops::{Scalar, VectorAdd};
 use crate::vector_ops::{VectorDiv, VectorMul, VectorOp, VectorSub};
 use bytemuck::cast_slice;
-use rustc_hash::FxHasher;
+use rustc_hash::FxBuildHasher;
 use std::borrow::Borrow;
-use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
+use std::hash::BuildHasher;
 use std::ops::{Add as StdAdd, Div as StdDiv, Mul as StdMul, Sub as StdSub};
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -13,7 +13,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
 };
-use xxhash_rust::xxh3::{Xxh3, xxh3_128};
+use xxhash_rust::xxh3::{Xxh3, Xxh3DefaultBuilder, xxh3_128};
 
 use crate::errors::CoalignError;
 
@@ -24,7 +24,7 @@ impl<T: Scalar + Debug> ValueDomain for T {}
 pub type Fingerprint = u128;
 
 pub trait KeyDomain: Eq + Hash + Clone {
-    type Hasher: BuildHasher + Default + Clone + Debug;
+    type Hasher: BuildHasher + Default + Clone;
     fn build_pos(keys: &impl KeyContainer<Self>) -> HashMap<Self, usize, Self::Hasher> {
         keys.as_ref()
             .iter()
@@ -40,7 +40,7 @@ macro_rules! impl_keydomain_int {
     ($($t:ty),*) => {
         $(
             impl KeyDomain for $t {
-                type Hasher = BuildHasherDefault<FxHasher>;
+                type Hasher = FxBuildHasher;
                 fn build_pos(keys: &impl KeyContainer<$t>) -> HashMap<Self, usize, Self::Hasher> {
                     keys.as_ref()
                         .iter()
@@ -71,7 +71,7 @@ fn hash_byte_slices<'a>(items: impl Iterator<Item = &'a [u8]>, count: usize) -> 
 }
 
 impl KeyDomain for &[u8] {
-    type Hasher = RandomState;
+    type Hasher = Xxh3DefaultBuilder;
     fn fingerprint(keys: &impl KeyContainer<Self>) -> Fingerprint {
         let keys = keys.as_ref();
         hash_byte_slices(keys.iter().copied(), keys.len())
@@ -79,7 +79,7 @@ impl KeyDomain for &[u8] {
 }
 
 impl KeyDomain for &str {
-    type Hasher = RandomState;
+    type Hasher = Xxh3DefaultBuilder;
     fn fingerprint(keys: &impl KeyContainer<Self>) -> Fingerprint {
         let keys = keys.as_ref();
         hash_byte_slices(keys.iter().map(|k| k.as_bytes()), keys.len())
@@ -87,7 +87,7 @@ impl KeyDomain for &str {
 }
 
 impl KeyDomain for Arc<str> {
-    type Hasher = RandomState;
+    type Hasher = Xxh3DefaultBuilder;
     fn fingerprint(keys: &impl KeyContainer<Self>) -> Fingerprint {
         let keys = keys.as_ref();
         hash_byte_slices(keys.iter().map(|k| k.as_bytes()), keys.len())
@@ -102,11 +102,25 @@ impl<T, C: AsRef<[T]> + Clone> KeyContainer<T> for C {}
 impl<T, C: AsRef<[T]> + Clone> ValueContainer<T> for C {}
 impl<T, C: AsRef<[T]> + AsMut<[T]> + Clone> MutValueContainer<T> for C {}
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone)]
 pub struct OrderingContainer<K: KeyDomain, KC> {
     fingerprint: Fingerprint,
     labels: KC,
     pos: Arc<OnceLock<HashMap<K, usize, K::Hasher>>>,
+}
+
+impl<K, KC> Debug for OrderingContainer<K, KC>
+where
+    K: KeyDomain + Debug,
+    KC: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrderingContainer")
+            .field("fingerprint", &self.fingerprint)
+            .field("labels", &self.labels)
+            .field("pos_initialized", &self.pos.get().is_some())
+            .finish()
+    }
 }
 
 impl<K: KeyDomain, KC: KeyContainer<K>> OrderingContainer<K, KC> {
