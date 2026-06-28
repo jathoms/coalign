@@ -3,6 +3,7 @@ use crate::vector_ops::{Scalar, VectorAdd};
 use crate::vector_ops::{VectorDiv, VectorMul, VectorOp, VectorSub};
 use bytemuck::cast_slice;
 use rustc_hash::FxHasher;
+use std::borrow::Borrow;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -84,21 +85,31 @@ impl KeyDomain for &str {
     }
 }
 
+impl KeyDomain for Arc<str> {
+    type Hasher = RandomState;
+    fn fingerprint(keys: &impl KeyContainer<Self>) -> Fingerprint {
+        let keys = keys.as_ref();
+        hash_byte_slices(keys.iter().map(|k| k.as_bytes()), keys.len())
+    }
+}
+
 pub trait KeyContainer<K>: AsRef<[K]> + Clone {}
-pub trait ValueContainer<V>: AsRef<[V]> + AsMut<[V]> + Clone {}
+pub trait ValueContainer<V>: AsRef<[V]> + Clone {}
+pub trait MutValueContainer<V>: AsRef<[V]> + AsMut<[V]> + Clone {}
 
 impl<T, C: AsRef<[T]> + Clone> KeyContainer<T> for C {}
-impl<T, C: AsRef<[T]> + AsMut<[T]> + Clone> ValueContainer<T> for C {}
+impl<T, C: AsRef<[T]> + Clone> ValueContainer<T> for C {}
+impl<T, C: AsRef<[T]> + AsMut<[T]> + Clone> MutValueContainer<T> for C {}
 
-#[derive(Default, Debug)]
-struct OrderingContainer<K: KeyDomain, KC> {
+#[derive(Default, Debug, Clone)]
+pub struct OrderingContainer<K: KeyDomain, KC> {
     fingerprint: Fingerprint,
     labels: KC,
     pos: Arc<OnceLock<HashMap<K, usize, K::Hasher>>>,
 }
 
 impl<K: KeyDomain, KC: KeyContainer<K>> OrderingContainer<K, KC> {
-    fn new(keys: KC) -> Self {
+    pub fn new(keys: KC) -> Self {
         let fingerprint = K::fingerprint(&keys);
         Self {
             fingerprint,
@@ -108,7 +119,7 @@ impl<K: KeyDomain, KC: KeyContainer<K>> OrderingContainer<K, KC> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct VectorMapping<K: KeyDomain, V, KC, VC> {
     ordering: OrderingContainer<K, KC>,
     values: VC,
@@ -144,13 +155,21 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         }
     }
 
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash + ?Sized,
+    {
         let idx = self
             .ordering
             .pos
             .get_or_init(|| K::build_pos(self.keys()))
-            .get(key)?;
+            .get(key.borrow())?;
         self.values.as_ref().get(*idx)
+    }
+
+    pub fn get_idx(&self, idx: usize) -> Option<&V> {
+        self.values.as_ref().get(idx)
     }
 
     pub fn keys(&self) -> &KC {
@@ -163,6 +182,10 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
 
     pub fn len(&self) -> usize {
         self.ordering.labels.as_ref().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     fn aligned_to<VC2: ValueContainer<V>>(
@@ -181,6 +204,24 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
             &target_order.ordering,
             reordered_vals,
         ))
+    }
+    pub fn into_parts(self) -> (OrderingContainer<K, KC>, VC) {
+        (self.ordering, self.values)
+    }
+    pub fn from_parts<VC2>(
+        ordering: OrderingContainer<K, KC>,
+        values: VC2,
+    ) -> VectorMapping<K, V, KC, VC2>
+    where
+        KC: KeyContainer<K>,
+        VC2: ValueContainer<V>,
+    {
+        assert_eq!(ordering.labels.as_ref().len(), values.as_ref().len());
+        VectorMapping {
+            ordering,
+            values,
+            _marker: Default::default(),
+        }
     }
 
     fn op<O: VectorOp, VC2: ValueContainer<V>>(
@@ -231,25 +272,8 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         Ok(VectorMapping::with_ordering(&large.ordering, buf))
     }
 
-    fn op_inplace<O: VectorOp, VC2: ValueContainer<V>>(
-        &mut self,
-        rhs: &VectorMapping<K, V, KC, VC2>,
-    ) -> Result<(), CoalignError> {
-        if self.ordering.fingerprint == rhs.ordering.fingerprint {
-            O::apply_inplace(self.values.as_mut(), rhs.values.as_ref());
-        } else {
-            let rhs_aligned_to_lhs = rhs.aligned_to(self)?;
-            O::apply_inplace(self.values.as_mut(), rhs_aligned_to_lhs.values.as_ref());
-        }
-        Ok(())
-    }
-
-    fn op_scalar<O: VectorOp>(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+    pub fn op_scalar<O: VectorOp>(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
         VectorMapping::with_ordering(&self.ordering, O::apply_scalar(self.values.as_ref(), rhs))
-    }
-
-    fn op_scalar_inplace<O: VectorOp>(&mut self, rhs: V) {
-        O::apply_scalar_inplace(self.values.as_mut(), rhs);
     }
 
     pub fn add<VC2: ValueContainer<V>>(
@@ -280,6 +304,49 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         self.op::<VectorDiv, VC2>(rhs)
     }
 
+    pub fn add_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorAdd>(rhs)
+    }
+
+    pub fn sub_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorSub>(rhs)
+    }
+
+    pub fn mul_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorMul>(rhs)
+    }
+
+    pub fn div_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
+        self.op_scalar::<VectorDiv>(rhs)
+    }
+
+    #[must_use]
+    pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
+        let keys = map.keys().cloned().collect::<Vec<_>>();
+        let values = map.values().copied().collect::<Vec<_>>();
+
+        VectorMapping::new(keys, values)
+    }
+}
+
+impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: MutValueContainer<V>>
+    VectorMapping<K, V, KC, VC>
+{
+    fn op_inplace<O: VectorOp, VC2: ValueContainer<V>>(
+        &mut self,
+        rhs: &VectorMapping<K, V, KC, VC2>,
+    ) -> Result<(), CoalignError> {
+        if self.ordering.fingerprint == rhs.ordering.fingerprint {
+            O::apply_inplace(self.values.as_mut(), rhs.values.as_ref());
+        } else {
+            let rhs_aligned_to_lhs = rhs.aligned_to(self)?;
+            O::apply_inplace(self.values.as_mut(), rhs_aligned_to_lhs.values.as_ref());
+        }
+        Ok(())
+    }
+    fn op_scalar_inplace<O: VectorOp>(&mut self, rhs: V) {
+        O::apply_scalar_inplace(self.values.as_mut(), rhs);
+    }
     pub fn add_inplace<VC2: ValueContainer<V>>(
         &mut self,
         rhs: &VectorMapping<K, V, KC, VC2>,
@@ -308,22 +375,6 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
         self.op_inplace::<VectorDiv, VC2>(rhs)
     }
 
-    pub fn add_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
-        self.op_scalar::<VectorAdd>(rhs)
-    }
-
-    pub fn sub_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
-        self.op_scalar::<VectorSub>(rhs)
-    }
-
-    pub fn mul_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
-        self.op_scalar::<VectorMul>(rhs)
-    }
-
-    pub fn div_scalar(&self, rhs: V) -> VectorMapping<K, V, KC, Vec<V>> {
-        self.op_scalar::<VectorDiv>(rhs)
-    }
-
     pub fn add_scalar_inplace(&mut self, rhs: V) {
         self.op_scalar_inplace::<VectorAdd>(rhs);
     }
@@ -339,15 +390,8 @@ impl<K: KeyDomain, V: ValueDomain, KC: KeyContainer<K>, VC: ValueContainer<V>>
     pub fn div_scalar_inplace(&mut self, rhs: V) {
         self.op_scalar_inplace::<VectorDiv>(rhs);
     }
-
-    #[must_use]
-    pub fn from_map_unsorted(map: &HashMap<K, V>) -> VectorMapping<K, V, Vec<K>, Vec<V>> {
-        let keys = map.keys().cloned().collect::<Vec<_>>();
-        let values = map.values().copied().collect::<Vec<_>>();
-
-        VectorMapping::new(keys, values)
-    }
 }
+
 impl<K: KeyDomain + Ord, V: ValueDomain> VectorMapping<K, V, Vec<K>, Vec<V>> {
     #[must_use]
     pub fn from_map_sorted(map: &HashMap<K, V>) -> Self {
